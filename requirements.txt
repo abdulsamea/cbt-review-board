@@ -2,14 +2,13 @@
 langchain
 langgraph
 langchain-core
+langchain-openai
+langchain-groq
+langchain-community
 
 # For Structured Data & Validation
 pydantic
 pydantic-settings
-
-# LLM Providers
-openai # For peak clinical quality
-# Optionally: ollama for local open source models
 
 langgraph-checkpoint-postgres
 psycopg-pool
@@ -19,6 +18,7 @@ fastapi
 uvicorn
 python-dotenv
 
-# NLP Utilities
+# Utilities
 spacy
 nltk
+pydantic
