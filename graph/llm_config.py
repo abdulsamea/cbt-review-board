@@ -1,3 +1,4 @@
+from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langchain_community.chat_models import ChatOllama
@@ -8,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_llm_chain(model_choice: str = 'openai' | 'groq' | 'ollama', output_schema: BaseModel = None) -> Runnable:
+def get_llm_chain(model_choice: Literal['openai', 'groq', 'ollama'] = 'openai', output_schema: BaseModel = None) -> Runnable:
     """
     Initializes a swappable LLM chain based on the model_choice, with optional structured output.
     
