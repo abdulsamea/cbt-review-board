@@ -1,0 +1,24 @@
+# Core LangChain/LangGraph
+langchain
+langgraph
+langchain-core
+
+# For Structured Data & Validation
+pydantic
+pydantic-settings
+
+# LLM Providers
+openai # For peak clinical quality
+# Optionally: ollama for local open source models
+
+langgraph-checkpoint-postgres
+psycopg-pool
+
+# Server & API
+fastapi
+uvicorn
+python-dotenv
+
+# NLP Utilities
+spacy
+nltk
