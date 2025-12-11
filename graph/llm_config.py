@@ -26,8 +26,7 @@ def get_llm_chain(model_choice: Literal['openai', 'groq', 'ollama'] = 'openai', 
     
     # 2. High-Speed Open LLM (Groq for near-local performance)
     elif model_choice == "groq":
-        # Using Mixtral 8x7B for high-quality open-source reasoning
-        llm = ChatGroq(model="mixtral-8x7b-32768", temperature=0.3, api_key=os.getenv("GROQ_API_KEY"))
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.3, api_key=os.getenv("GROQ_API_KEY"))
     
     # 3. Local/Hugging Face LLM (True Local Development/Open Source)
     elif model_choice == "ollama":

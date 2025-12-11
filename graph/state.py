@@ -1,4 +1,4 @@
-from typing import TypedDict, List
+from typing import Literal, TypedDict, List
 from pydantic import BaseModel, Field
 
 # 1. Structured Feedback Models (Used by Critic and Safety Agents)
@@ -17,6 +17,7 @@ class ProjectState(TypedDict):
     current_draft: str
     draft_history: List[str]
     iteration_count: int
+    model_choice: str
     
     # Reducers / Metrics
     safety_metric: float # Updated by Safety Team
@@ -27,5 +28,5 @@ class ProjectState(TypedDict):
     safety_report: SafetyReport
     
     # Control variables for routing/HIL
-    next_node: str # Conditional edge result (used by Supervisor)
+    next_node:  Literal['openai', 'groq', 'ollama'] # Conditional edge result (used by Supervisor)
     human_decision: str # Input from HIL ('Approve' or 'Reject')

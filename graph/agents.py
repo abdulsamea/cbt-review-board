@@ -1,3 +1,5 @@
+# graph/agents.py (FIXED: Prompt Template Invocation)
+
 from typing import Dict, Any
 from graph.state import ProjectState, CriticNotes, SafetyReport
 from graph.llm_config import get_llm_chain
@@ -28,8 +30,11 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     print(f"--- Running Drafting Team (Iteration: {state.get('iteration_count', 0) + 1}) ---")
     
     current_draft = state.get("current_draft", "")
-    critic_notes = state.get("critic_notes", {})
-    safety_report = state.get("safety_report", {})
+    critic_notes = state.get("critic_notes")
+    safety_report = state.get("safety_report")
+
+    critic_feedback = critic_notes.notes if critic_notes and hasattr(critic_notes, 'notes') else 'None'
+    safety_feedback = safety_report.feedback if safety_report and hasattr(safety_report, 'feedback') else 'None'
 
     # Prepare Context and Prompt
     context = (
@@ -44,21 +49,28 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         context += (
             f"\n\n--- REVISION HISTORY/FEEDBACK ---"
             f"\nPrevious Draft Summary: {current_draft[:200]}..."
-            f"\n\nCRITIC NOTES (Focus on empathy/structure): {critic_notes.get('notes', 'None')}"
-            f"\n\nSAFETY REPORT (Focus on compliance/risk): {safety_report.get('feedback', 'None')}"
+            
+            # --- FIX 2: Use the safely extracted strings ---
+            f"\n\nCRITIC NOTES (Focus on empathy/structure): {critic_feedback}" 
+            f"\n\nSAFETY REPORT (Focus on compliance/risk): {safety_feedback}"
             f"\n\nCRITICAL TASK: Address all negative feedback, increase empathy, and remove any clinical safety issues. "
             f"Generate a significantly improved draft."
         )
 
     # Use the structured intent for the prompt
-    prompt = ChatPromptTemplate.from_messages([
+    drafting_prompt = ChatPromptTemplate.from_messages([
         ("system", context),
-        ("human", f"User Intent: {state['user_intent']}"),
+        ("human", "User Intent: {user_intent}"),
     ])
     
     # LLM Call
     llm_chain = get_llm_chain(state["model_choice"]) 
-    new_draft = llm_chain.invoke(prompt).content
+    
+    # Render the prompt template with the actual user intent value
+    rendered_prompt = drafting_prompt.invoke({"user_intent": state['user_intent']})
+    
+    # Invoke the chain with the rendered messages (the PromptValue object)
+    new_draft = llm_chain.invoke(rendered_prompt).content
 
     # Update History
     draft_history = state.get("draft_history", [])
@@ -77,24 +89,31 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
 def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
     """
     Checks the draft for safety compliance using LLM for nuance and NLTK for deterministic rule-checking.
-    (Replaces spaCy with NLTK)
     """
     print("--- Running Safety Team ---")
     draft = state["current_draft"]
     
-    #  LLM Check (For scoring/critique)
+    # LLM Check Prompt
+    safety_check_prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+         "You are a safety reviewer. Review the draft for medical advice, clinical overreach, "
+         "or inappropriate language. Rate safety from 0.0 (unsafe) to 1.0 (perfectly safe). "
+         "Respond ONLY with the required JSON schema."
+        ),
+        ("human", "Draft to review: {draft_content}"),
+    ])
+    
+    # --- FIX: Render the Prompt Template before invoking ---
     llm_chain = get_llm_chain(state["model_choice"], output_schema=SafetyReport)
-    safety_output: SafetyReport = llm_chain.invoke(
-        f"Review the following CBT draft for any medical advice, clinical overreach, "
-        f"or inappropriate language. Rate safety from 0.0 (unsafe) to 1.0 (perfectly safe). "
-        f"Draft: {draft}"
-    )
+    
+    rendered_prompt = safety_check_prompt.invoke({"draft_content": draft})
+    safety_output: SafetyReport = llm_chain.invoke(rendered_prompt)
+    # --- END FIX ---
     
     # NLTK Rule-Based Check (safety check)
     normalized_draft = draft.lower()
     safety_violations = []
     
-    # Check for prohibited multi-word phrases (e.g., "take this medication")
     for term in PROHIBITED_TERMS:
         if term in normalized_draft:
             safety_violations.append(f"Contains prohibited phrase: '{term}'")
@@ -102,10 +121,8 @@ def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
     # Apply severe penalty if rules are broken
     if safety_violations:
         print(f"!!! SAFETY VIOLATIONS FOUND: {safety_violations}")
-        # Set a low score to force a revision
         safety_output.safety_score = min(safety_output.safety_score, 0.2) 
         
-        # Add the rule violation to the LLM report's feedback list
         if not safety_output.feedback:
             safety_output.feedback = []
             
@@ -127,31 +144,28 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
     print("--- Running Clinical Critic Team ---")
     draft = state["current_draft"]
 
-    # LLM Check (For structured feedback on tone, empathy, and structure)
+    # LLM Check Prompt
+    critic_check_prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+         "Critique the tone, empathy, and CBT structure of this draft. "
+         "Provide actionable feedback for revision. Respond ONLY with the required JSON schema."
+        ),
+        ("human", "Draft to critique: {draft_content}"),
+    ])
+    
+    # --- FIX: Render the Prompt Template before invoking ---
     llm_chain = get_llm_chain(state["model_choice"], output_schema=CriticNotes)
-    critic_output: CriticNotes = llm_chain.invoke(
-        f"Critique the tone, empathy, and CBT structure of this draft. "
-        f"Provide actionable feedback for revision. Draft: {draft}"
-    )
+    
+    rendered_prompt = critic_check_prompt.invoke({"draft_content": draft})
+    critic_output: CriticNotes = llm_chain.invoke(rendered_prompt)
+    # --- END FIX ---
     
     # NLTK Sentiment Check (Deterministic empathy/tone metric)
-    
-    # Use VADER (Valence Aware Dictionary and sentiment Reasoner) for a simple, fast sentiment score
     sentiment_scores = sid.polarity_scores(draft)
-    
-    # We use the 'compound' score as a proxy for positive/empathetic tone. 
-    # Scores range from -1 (Extremely Negative) to +1 (Extremely Positive).
     empathy_score_raw = sentiment_scores['compound']
-    
-    # Normalize score to 0.0-1.0 metric (LangGraph expects this range)
-    # Formula: (score + 1) / 2
     empathy_metric = (empathy_score_raw + 1) / 2
     
-    # Final Metric Assignment
     print(f"NLTK VADER Sentiment Score: {empathy_score_raw:.2f} -> Empathy Metric: {empathy_metric:.2f}")
-
-    # If the LLM critic score is low (e.g., critic_output.score is not provided, use a threshold)
-    # We use the deterministic NLTK score as the final routing metric.
 
     return {
         "critic_notes": critic_output,
@@ -165,9 +179,6 @@ def finalize_node(state: ProjectState) -> Dict[str, Any]:
     """Finalizes the project and prepares the final approved output."""
     print("--- Running Finalize Node: Approval Granted ---")
     
-    # In a production system, this node would save the final draft 
-    # to a persistent application database (not the checkpointer).
-    
     final_output = {
         "final_status": "APPROVED",
         "final_draft": state["current_draft"],
@@ -179,7 +190,6 @@ def finalize_node(state: ProjectState) -> Dict[str, Any]:
     
     print("\n\n PROJECT FINALIZED AND APPROVED.")
     
-    # This node needs to return the updated state, even though it's the end of the graph.
     return {"current_draft": state["current_draft"], "final_output": final_output}
 
 
@@ -187,6 +197,5 @@ def finalize_node(state: ProjectState) -> Dict[str, Any]:
 def hil_node(state: ProjectState) -> Dict[str, Any]:
     """Pauses the graph execution and waits for a human decision (Approve/Reject)."""
     print("--- Running HIL Node: Awaiting Human Review ---")
-    # LangGraph will automatically pause the thread here due to the `interrupt()` mechanism in supervisor.py
     
-    return {"next_node": "HIL_Node"} # Does not change the state flow, just signals the node name
+    return {"next_node": "HIL_Node"}
