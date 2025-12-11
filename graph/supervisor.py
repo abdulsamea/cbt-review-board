@@ -17,6 +17,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def route_initial_entry(state: ProjectState) -> str:
+    """
+    Determines the first node to run when a thread is first invoked.
+    If the state somehow indicates completion (e.g., if you are passing a mock approved state),
+    it routes to Finalize, otherwise, it begins the Drafting process.
+    """
+    human_decision = state.get("human_decision")
+    
+    # In a resume scenario, human_decision is set to 'Approve' or 'Reject' by the API server.
+    # If the thread is new, human_decision is 'REVIEW_REQUIRED'.
+    
+    if human_decision == "Approve":
+        print("Conditional Entry: State indicates pre-approval. Routing to Finalize.")
+        return "Finalize"
+    
+    # If the decision is 'Reject' or 'REVIEW_REQUIRED', start the process.
+    print("Conditional Entry: Starting new or revised process. Routing to Drafting.")
+    return "Drafting"
+
 # --- Conditional Edge Logic (Router Functions remain the same) ---
 def route_safety_check(state: ProjectState) -> str:
     # ... (content remains the same)
@@ -37,26 +57,50 @@ def route_critic_check(state: ProjectState) -> str:
         print(f"Router (Critic): Below threshold ({state.get('empathy_metric', 0.0):.2f}). Looping back to Drafting.")
         return "Drafting" 
     
-    # 2. Max Iteration Check: If acceptable AND max iterations reached, FORCE HIL.
-    if state.get("iteration_count", 0) >= 3:
-        print("Router (Critic): Max iterations reached. Forcing HIL_Node.")
-        return "HIL_Node" 
+    current_iteration = state.get("iteration_count", 0)
+    
+    # 2. Halt Condition 1: First Draft Review
+    # If the first iteration (count=1) passed metrics, send it to the Human.
+    if current_iteration == 1:
+        print("Router (Critic): First draft passed metrics. Moving to HIL_Node for initial review.")
+        return "HIL_Node"
         
-    # 3. Default Path: If it passed metrics but is NOT at the iteration limit.
-    # NOTE: In your original design, this line should never be hit if iteration_count >= 3.
-    print("Router (Critic): Both metrics approved. Moving to Finalize.")
-    return "Finalize"
+    # 3. Halt Condition 2: Max Iteration Check (for subsequent revisions)
+    # If acceptable AND max iterations reached, FORCE HIL -> Finalize (or Review).
+    if current_iteration >= 3:
+        print("Router (Critic): Max iterations reached. Moving to Finalize.")
+        return "Finalize" 
+        
+    # 4. Default Path: If iteration count is 2 and metrics passed, send it to the Human for mandatory final approval (or one more loop if needed).
+    # Since the agent passed metrics, but is not at max iterations (i.e., count=2), send it to the human for the *final* pre-finalize review.
+    # Note: If the graph is resumed after a rejection, the iteration count will increase, routing it through the above checks.
+    print("Router (Critic): Metrics acceptable, but not yet finalized. Moving to HIL_Node for human review.")
+    return "HIL_Node"
+
 
 def route_human_decision(state: ProjectState) -> str:
-    # ... (content remains the same)
-    human_action = state.get("human_decision", "Reject")
+    """
+    Routes the graph based on the human's decision ('Approve' or 'Reject').
+    This function is executed immediately after the human input is received.
+    """
+    human_decision = state.get("human_decision")
+    print('------------------------------------------------------ ')
+    print(human_decision)
 
-    if human_action == "Approve":
-        print("Router (HIL): Human Approved. Moving to Finalize.")
+    if human_decision == "Approve":
+        print("Router (HIL): Decision is 'Approve'. Moving to Finalize.")
+        # Finalize node leads directly to END
         return "Finalize"
-
-    print("Router (HIL): Human Rejected/Revise. Looping back to Drafting.")
-    return "Drafting"
+    
+    elif human_decision == "Reject":
+        print("Router (HIL): Decision is 'Reject'. Moving to Drafting for revision.")
+        # Drafting node starts the revision loop
+        return "Drafting"
+        
+    else:
+        # This branch should ideally never be hit after the resume_session POST
+        print(f"Router (HIL): Unexpected decision or flag reset ({human_decision}). Halting.")
+        return "HIL_Node"
 
 # --- Checkpointer Setup (Enforced SQLite Persistence) ---
 
@@ -139,7 +183,10 @@ def compile_supervisor_graph():
     workflow.add_node("Finalize", finalize_node)
 
     # Set Entry Point and Edges
-    workflow.set_entry_point("Drafting")
+    workflow.set_conditional_entry_point(
+        route_initial_entry,
+        {"Drafting": "Drafting", "Finalize": "Finalize"}
+    )
 
     workflow.add_edge("Drafting", "Safety")
 

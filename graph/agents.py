@@ -32,11 +32,15 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     current_draft = state.get("current_draft", "")
     critic_notes = state.get("critic_notes")
     safety_report = state.get("safety_report")
-
+    current_intent = state["user_intent"] # Grab the current user_intent
+    
     critic_feedback = critic_notes.notes if critic_notes and hasattr(critic_notes, 'notes') else 'None'
     safety_feedback = safety_report.feedback if safety_report and hasattr(safety_report, 'feedback') else 'None'
 
-    # Prepare Context and Prompt
+    # --- NEW LOGIC: Determine Revision Source ---
+    is_human_revision = current_intent.startswith("REVISION INSTRUCTION:")
+    
+    # 1. Prepare Base Context
     context = (
         f"You are a CBT exercise creator. Your task is to generate a comprehensive "
         f"Cognitive Behavioral Therapy (CBT) exercise based on the user's intent, "
@@ -44,32 +48,52 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         f"The final output must be engaging and non-directive."
     )
     
-    # Add revision context if this is not the first iteration
-    if state.get("iteration_count", 0) > 0:
+    task_instruction: str
+    
+    if is_human_revision:
+        # --- PRIORITY 1: Human Rejection Feedback ---
+        revision_instruction = current_intent
         context += (
-            f"\n\n--- REVISION HISTORY/FEEDBACK ---"
+            f"\n\n--- CRITICAL REVISION TASK: HUMAN OVERRIDE ---"
+            f"\nThe previous draft was REJECTED. Your ONLY task is to address the following "
+            f"human instruction and apply changes directly to the EXISTING DRAFT. "
+            f"\n\nEXISTING DRAFT TO REVISE:\n{current_draft[:200]}..."
+            f"\n\n--- HUMAN INSTRUCTION ---\n{revision_instruction}"
+            f"\n\nNOTE: IGNORE prior LLM-generated feedback (Critic/Safety) if it conflicts with the human's request."
+        )
+        task_instruction = f"REVISE THE DRAFT using the instruction: {revision_instruction}"
+        
+    elif state.get("iteration_count", 0) > 0:
+        # --- PRIORITY 2: Internal LLM Feedback (Safety/Critic) ---
+        context += (
+            f"\n\n--- INTERNAL REVISION TASK ---"
             f"\nPrevious Draft Summary: {current_draft[:200]}..."
-            
-            # --- FIX 2: Use the safely extracted strings ---
             f"\n\nCRITIC NOTES (Focus on empathy/structure): {critic_feedback}" 
             f"\n\nSAFETY REPORT (Focus on compliance/risk): {safety_feedback}"
             f"\n\nCRITICAL TASK: Address all negative feedback, increase empathy, and remove any clinical safety issues. "
             f"Generate a significantly improved draft."
         )
+        task_instruction = f"REVISE THE DRAFT based on internal feedback for user intent: {state['user_intent']}"
+        
+    else:
+        # --- PRIORITY 3: Initial Draft ---
+        task_instruction = f"GENERATE the initial draft for user intent: {state['user_intent']}"
+
 
     # Use the structured intent for the prompt
     drafting_prompt = ChatPromptTemplate.from_messages([
         ("system", context),
-        ("human", "User Intent: {user_intent}"),
+        # Pass the original user intent/the human revision instruction here
+        ("human", "Core Task/Instruction: {task_instruction}"), 
     ])
     
     # LLM Call
     llm_chain = get_llm_chain(state["model_choice"]) 
     
-    # Render the prompt template with the actual user intent value
-    rendered_prompt = drafting_prompt.invoke({"user_intent": state['user_intent']})
+    # Render the prompt template with the actual task instruction
+    rendered_prompt = drafting_prompt.invoke({"task_instruction": task_instruction})
     
-    # Invoke the chain with the rendered messages (the PromptValue object)
+    # Invoke the chain with the rendered messages
     new_draft = llm_chain.invoke(rendered_prompt).content
 
     # Update History
@@ -82,8 +106,12 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         "draft_history": draft_history,
         "iteration_count": state.get("iteration_count", 0) + 1,
         "model_choice": state["model_choice"],
+        # IMPORTANT: When a human rejected the draft, 'user_intent' was set to "REVISION INSTRUCTION:...",
+        # We must reset 'human_decision' so the HIL router correctly pauses again for the next review.
+        "human_decision": "REVIEW_REQUIRED", 
+        # Optional: You might want to reset the user_intent to the ORIGINAL prompt after the revision is done, 
+        # but leaving it as the revision instruction ensures logging clarity.
     }
-
 
 # Safety Team Agent Node
 def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
