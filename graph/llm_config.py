@@ -22,11 +22,11 @@ def get_llm_chain(model_choice: Literal['openai', 'groq', 'ollama'] = 'openai', 
     # 1. use OpenAI for high clinical quality
     if model_choice == "openai":
         # Using GPT-4o-mini for a balance of quality and speed
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, api_key=os.getenv("OPENAI_API_KEY")) 
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, api_key=os.getenv("OPENAI_API_KEY")) 
     
     # 2. High-Speed Open LLM (Groq for near-local performance)
     elif model_choice == "groq":
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.3, api_key=os.getenv("GROQ_API_KEY"))
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7, api_key=os.getenv("GROQ_API_KEY"))
     
     # 3. Local/Hugging Face LLM (True Local Development/Open Source)
     elif model_choice == "ollama":

@@ -106,6 +106,7 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         "draft_history": draft_history,
         "iteration_count": state.get("iteration_count", 0) + 1,
         "model_choice": state["model_choice"],
+        "active_node": "Drafting",
         # IMPORTANT: When a human rejected the draft, 'user_intent' was set to "REVISION INSTRUCTION:...",
         # We must reset 'human_decision' so the HIL router correctly pauses again for the next review.
         "human_decision": "REVIEW_REQUIRED", 
@@ -163,6 +164,7 @@ def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
         "safety_report": safety_output,
         "safety_metric": safety_metric,
         "model_choice": state["model_choice"],
+        "active_node": "Safety",
     }
 
 
@@ -199,6 +201,7 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
         "critic_notes": critic_output,
         "empathy_metric": empathy_metric,
         "model_choice": state["model_choice"],
+        "active_node": "Critic",
     }
 
 
@@ -218,7 +221,7 @@ def finalize_node(state: ProjectState) -> Dict[str, Any]:
     
     print("\n\n PROJECT FINALIZED AND APPROVED.")
     
-    return {"current_draft": state["current_draft"], "final_output": final_output}
+    return {"current_draft": state["current_draft"], "final_output": final_output, "active_node": "Finalize"}
 
 
 # Human-in-the-Loop Node
@@ -226,4 +229,4 @@ def hil_node(state: ProjectState) -> Dict[str, Any]:
     """Pauses the graph execution and waits for a human decision (Approve/Reject)."""
     print("--- Running HIL Node: Awaiting Human Review ---")
     
-    return {"next_node": "HIL_Node"}
+    return {"next_node": "HIL_Node", "active_node": "HIL_Node"}

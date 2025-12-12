@@ -18,6 +18,7 @@ class ProjectState(TypedDict):
     draft_history: List[str]
     iteration_count: int
     model_choice: str
+    active_node: Literal['Drafting', 'Safety', 'Critic', 'HIL_Node', 'Finalize']
     
     # Reducers / Metrics
     safety_metric: float # Updated by Safety Team

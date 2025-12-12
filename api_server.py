@@ -1,23 +1,31 @@
+import asyncio
+import json
+import threading
 import uvicorn
 import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Literal, Optional, Union
-from graph.state import ProjectState, CriticNotes, SafetyReport
+from typing import Any, Dict, Literal, Optional, Union
+from graph.state import CriticNotes, SafetyReport
 from graph.supervisor import cbt_review_graph 
 
 app_api = FastAPI()
 
 app_api.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], 
+    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Data Models for Communication (UPDATED) ---
+# In-memory tracking for background graph runs
+active_threads: Dict[str, threading.Thread] = {}
+thread_errors: Dict[str, str] = {}
+
+# Data Models APIs
 
 class StartSessionRequest(BaseModel):
     user_prompt: str
@@ -26,9 +34,8 @@ class StartSessionRequest(BaseModel):
 
 class ResumeSessionRequest(BaseModel):
     thread_id: str
-    # CHANGED: Use suggested_content for specific revision instructions
     suggested_content: str = Field(description="Specific feedback or new instructions for the drafting agent.")
-    human_decision: Literal['Approve', 'Reject'] # The decision flag
+    human_decision: Literal['Approve', 'Reject']
 
 class SessionStatus(BaseModel):
     thread_id: str
@@ -39,162 +46,252 @@ class SessionStatus(BaseModel):
     safety_metric: Optional[float]
     empathy_metric: Optional[float]
     model_choice: str
-    
-# --- Helper Function to Create Initial State (omitted for brevity) ---
+    active_node: Optional[str] = Field(default=None, description="Last known active node in the graph.")
+    active_node_label: Optional[str] = Field(default=None, description="User-friendly label for the active node.")
 
-def create_initial_state(user_prompt: str, thread_id: str, model_choice: str) -> ProjectState:
-    """Initializes ProjectState with mandatory fields."""
-    return ProjectState(
-        user_intent=user_prompt,
-        thread_id=thread_id,
-        current_draft="",
-        draft_history=[],
-        iteration_count=0,
-        model_choice=model_choice,
-        safety_metric=0.0,
-        empathy_metric=0.0,
-        critic_notes=CriticNotes(empathy_revision="", structure_revision=""),
-        safety_report=SafetyReport(flagged_lines=[], safety_score=0.0),
-        next_node=model_choice,  
-        human_decision="REVIEW_REQUIRED" 
-    )
+def create_initial_state(user_prompt: str, thread_id: str, model_choice: str) -> Dict[str, Any]:
+    """Initializes ProjectState with mandatory fields as a dict."""
+    return {
+        "user_intent": user_prompt,
+        "thread_id": thread_id,
+        "current_draft": "",
+        "draft_history": [],
+        "iteration_count": 0,
+        "model_choice": model_choice,
+        "active_node": "Drafting",
+        "safety_metric": 0.0,
+        "empathy_metric": 0.0,
+        "critic_notes": CriticNotes(empathy_revision="", structure_revision=""),
+        "safety_report": SafetyReport(flagged_lines=[], safety_score=0.0),
+        "next_node": model_choice,  
+        "human_decision": "REVIEW_REQUIRED" 
+    }
 
-# --- Core Checkpoint Retrieval Function (THE FINAL FIX) ---
-def get_state_from_checkpoint(checkpoint: Optional[Dict[str, Any]]) -> ProjectState:
-    """
-    Safely extracts the state data from a LangGraph checkpoint dictionary.
-    Prioritizes 'channel_values' based on the latest environment feedback.
-    """
+
+def get_state_from_checkpoint(checkpoint: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Safely extracts the state data from a LangGraph checkpoint dictionary."""
     if not checkpoint:
         raise HTTPException(status_code=500, detail="CRITICAL: Checkpoint not found. Graph failed to save state.")
         
-    # 1. Try 'channel_values' key (Based on recent error traceback)
     state_data = checkpoint.get('channel_values')
     
-    # 2. Fallback: If 'channel_values' is missing
     if state_data is None:
         state_data = checkpoint.get('values', checkpoint) 
         
-    # 3. Final validation
+    # NOTE: Since state_data is likely a channel value wrapper, we need to extract the actual state dictionary
+    # Assuming ProjectState is a dict, we extract it from the LangGraph wrapper (usually '__root__')
+    if isinstance(state_data, dict) and "__root__" in state_data:
+        root_data = state_data["__root__"].get("value")
+        if isinstance(root_data, dict):
+             return root_data
+        # Handle string serialization if state is serialized as a JSON string
+        elif isinstance(root_data, str):
+            try:
+                return json.loads(root_data)
+            except json.JSONDecodeError:
+                pass
+        
+    # Final validation/error for unhandled structures
     if not isinstance(state_data, dict) or 'thread_id' not in state_data:
-         raise HTTPException(
-            status_code=500, 
-            detail=f"CRITICAL: Checkpoint data is malformed. Retrieved dictionary lacks necessary state keys. Full checkpoint keys: {list(checkpoint.keys())}"
-         )
+          raise HTTPException(
+              status_code=500, 
+              detail=f"CRITICAL: Checkpoint data is malformed. Retrieved dictionary lacks necessary state keys. Full checkpoint keys: {list(checkpoint.keys())}"
+           )
 
-    return state_data
+    return state_data # Return the state_data if it's already the dict (older format)
 
 
-# --- API Endpoints ---
+def _derive_status_view(
+    thread_id: str,
+    state: Optional[Dict[str, Any]],
+    thread_alive: bool,
+    default_model_choice: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Derives a user-friendly status dictionary from the raw state."""
+    node_labels = {
+        "Drafting": "Drafting Team",
+        "Safety": "Safety Team",
+        "Critic": "Clinical Critic Team",
+        "HIL_Node": "Human Review",
+        "Finalize": "Finalize",
+        "END": "Finalized"
+    }
+
+    human_action = state.get("human_decision") if state else None
+    current_draft = state.get("current_draft") if state else None
+    final_cbt_plan = None
+    is_complete = False
+    
+    status: Literal["running", "halted", "complete", "revising"] = "running"
+    if thread_alive:
+         status = "running"
+         if human_action == "Reject":
+             status = "revising"
+    else:
+        status = "halted"
+
+    if state.get("active_node") == "END" or human_action == "Approve":
+        status = "complete"
+        is_complete = True
+        final_cbt_plan = state.get("current_draft") # Assuming current_draft holds final output upon completion
+
+    active_node = state.get("active_node", "HIL_Node") if state else None
+    
+    return {
+        "thread_id": thread_id,
+        "is_complete": is_complete,
+        "status": status,
+        "current_draft": current_draft,
+        "final_cbt_plan": final_cbt_plan,
+        "safety_metric": state.get("safety_metric") if state else None,
+        "empathy_metric": state.get("empathy_metric") if state else None,
+        "model_choice": (state.get("model_choice") if state else default_model_choice) or "openai",
+        "active_node": active_node,
+        "active_node_label": node_labels.get(active_node) if active_node else None,
+        "error": thread_errors.get(thread_id),
+    }
+
+
+def run_graph_in_background(initial_state: Dict[str, Any], config: Dict[str, Any], thread_id: str) -> None:
+    """Run the LangGraph in a background thread and track errors. (As provided)"""
+    thread_errors.pop(thread_id, None)
+    try:
+        # NOTE: This is synchronous invoke, suitable for background threading.
+        cbt_review_graph.invoke(initial_state, config=config)
+    except Exception as e:
+        thread_errors[thread_id] = str(e)
+        print(f"Background graph execution for {thread_id} stopped: {e}")
+    finally:
+        active_threads.pop(thread_id, None)
+
+def execute_graph_in_background(thread_id: str, state_to_invoke: Dict[str, Any]):
+    """
+    Common function to check if thread is running and execute the graph in a new thread.
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+
+    existing_thread = active_threads.get(thread_id)
+    if existing_thread and existing_thread.is_alive():
+        raise HTTPException(status_code=400, detail=f"Session {thread_id} is already running.")
+
+    background_thread = threading.Thread(
+        target=run_graph_in_background,
+        args=(state_to_invoke, config, thread_id),
+        daemon=True,
+    )
+    active_threads[thread_id] = background_thread
+    background_thread.start()
+
+def _prepare_and_invoke_session(
+    thread_id: str,
+    initial_state_or_resume_req: Union[Dict[str, Any], ResumeSessionRequest],
+    default_model_choice: Optional[str] = None
+) -> SessionStatus:
+    """
+    Unified logic to prepare state (initial or resumed) and start background execution.
+    """
+    state_to_invoke: Dict[str, Any]
+    
+    if isinstance(initial_state_or_resume_req, dict):
+        # Case 1: Start Session
+        state_to_invoke = initial_state_or_resume_req
+        
+    elif isinstance(initial_state_or_resume_req, ResumeSessionRequest):
+        # Case 2: Resume Session
+        req = initial_state_or_resume_req
+        config = {"configurable": {"thread_id": req.thread_id}}
+        
+        # Load latest state from checkpointer
+        checkpoint = cbt_review_graph.checkpointer.get(config)
+        if not checkpoint:
+            raise HTTPException(status_code=404, detail=f"Session {req.thread_id} not found.")
+            
+        current_state_data = get_state_from_checkpoint(checkpoint)
+        state_to_invoke = dict(current_state_data) # Create mutable copy
+        
+        # Apply human input logic
+        if req.human_decision == 'Approve':
+            state_to_invoke['human_decision'] = 'Approve' 
+            state_to_invoke['user_intent'] = state_to_invoke.get('user_intent', '').split("REVISION INSTRUCTION")[0].strip()
+
+        elif req.human_decision == 'Reject':
+            state_to_invoke['user_intent'] = (
+                f"REVISION INSTRUCTION (Based on Rejected Draft): {req.suggested_content}"
+            )
+            state_to_invoke['human_decision'] = 'Reject' 
+            state_to_invoke['active_node'] = 'Drafting' # Explicitly set node for quick stream update
+            state_to_invoke['status'] = 'revising'
+            
+    else:
+        raise ValueError("Invalid input type for _prepare_and_invoke_session")
+
+    # Start graph execution
+    execute_graph_in_background(thread_id, state_to_invoke)
+
+    # Return the latest state immediately
+    status_view = _derive_status_view(thread_id, state=state_to_invoke, thread_alive=True, default_model_choice=default_model_choice)
+
+    return SessionStatus(**status_view)
 
 @app_api.post("/start_session", response_model=SessionStatus)
 async def start_session(req: StartSessionRequest):
-    """Starts a LangGraph session and executes it up to the first 'halt' point."""
+    """Starts a LangGraph CBT session and executes it up to the first 'review' point."""
     
     thread_id = req.thread_id or str(uuid.uuid4())
     initial_state = create_initial_state(req.user_prompt, thread_id, req.model_choice)
-    config = {"configurable": {"thread_id": thread_id}}
     
-    try:
-        cbt_review_graph.invoke(initial_state, config=config)
-    except Exception as e:
-        print(f"Graph execution stopped (expected halt): {e}")
-
-    # 1. Fetch the checkpoint
-    current_checkpoint = cbt_review_graph.checkpointer.get(config) 
-    
-    # 2. Safely extract the state data
-    current_state: ProjectState = get_state_from_checkpoint(current_checkpoint)
-
-    # 3. Map ProjectState (TypedDict) to SessionStatus (Pydantic)
-    return SessionStatus(
+    return _prepare_and_invoke_session(
         thread_id=thread_id,
-        is_complete=False,
-        status="halted", 
-        current_draft=current_state.get('current_draft'),
-        final_cbt_plan=None,
-        safety_metric=current_state.get('safety_metric'),
-        empathy_metric=current_state.get('empathy_metric'),
-        model_choice=current_state.get('model_choice')
+        initial_state_or_resume_req=initial_state,
+        default_model_choice=req.model_choice
     )
 
 
 @app_api.post("/resume_session", response_model=SessionStatus)
 async def resume_session(req: ResumeSessionRequest):
-    """Resumes a halted session with human input."""
+    """Resumes a halted session with human input and runs the graph in background."""
     
-    config = {"configurable": {"thread_id": req.thread_id}}
-    checkpoint = cbt_review_graph.checkpointer.get(config)
-    
-    # 1. Safely load and update the state
-    current_state_data = get_state_from_checkpoint(checkpoint)
-    
-    # Create a mutable copy (dict) of the state for modification
-    current_state: ProjectState = dict(current_state_data)
-    
-    # 2. Modify the state based on human input for resumption (CRUCIAL LOGIC CHANGE HERE)
-    
-    if req.human_decision == 'Approve':
-        # --- APPROVAL PATH: Finalize the Draft ---
-        
-        # 1. Set the decision flag to trigger the 'Finalize' route
-        current_state['human_decision'] = 'Approve' 
-        
-        # 2. MITIGATION: Clear the user_intent to ensure it doesn't contain a residual revision instruction
-        current_state['user_intent'] = current_state.get('user_intent', '').split("REVISION INSTRUCTION")[0].strip()
-
-    elif req.human_decision == 'Reject':
-        # If rejected, the agent MUST take the suggestion as the new primary intent/revision context.
-        # The Drafting Agent uses 'user_intent' for the core task.
-        current_state['user_intent'] = (
-            f"REVISION INSTRUCTION (Based on Rejected Draft): {req.suggested_content}"
-        )
-        # Note: The 'current_draft' field already holds the previous rejected draft, 
-        # which the Drafting Agent uses for revision context in agents.py.
-
-        current_state['human_decision'] = 'Reject' 
-
-    # 3. Resume execution
-    try:
-        cbt_review_graph.invoke(current_state, config=config)
-    except Exception as e:
-        print(f"Resume execution stopped: {e}")
-
-    # 4. Fetch the final state and return status
-    final_checkpoint = cbt_review_graph.checkpointer.get(config)
-    final_state: ProjectState = get_state_from_checkpoint(final_checkpoint)
-    
-    # 5. Determine status and final output based on the last decision/state
-    human_action = final_state.get('human_decision')
-    
-    is_complete: bool
-    status: Literal["running", "halted", "complete", "revising"]
-    final_cbt_plan: Optional[str] = None
-    current_draft = final_state.get('current_draft')
-    
-    if human_action == 'Approve':
-        status = "complete"
-        is_complete = True
-        final_cbt_plan = current_draft
-    elif human_action == 'Reject':
-        # The agent ran a revision cycle and halted again for review
-        status = "halted" 
-        is_complete = False
-    else:
-        status = "halted" 
-        is_complete = False
-
-
-    return SessionStatus(
+    return _prepare_and_invoke_session(
         thread_id=req.thread_id,
-        is_complete=is_complete,
-        status=status, 
-        current_draft=current_draft,
-        final_cbt_plan=final_cbt_plan,
-        safety_metric=final_state.get('safety_metric'),
-        empathy_metric=final_state.get('empathy_metric'),
-        model_choice=final_state.get('model_choice')
+        initial_state_or_resume_req=req
     )
+
+@app_api.get("/stream_session_info")
+async def stream_session_info(thread_id: str, poll_interval: float = 0.75):
+    """
+    Streams session info (phase, status, metrics) in real time for the frontend.
+    Uses Server-Sent Events (text/event-stream) to push updates until the graph halts or completes.
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async def event_generator():
+        last_payload: Optional[Dict[str, Any]] = None
+        while True:
+            checkpoint = cbt_review_graph.checkpointer.get(config)
+            state: Optional[Dict[str, Any]] = None
+            
+            if checkpoint:
+                try:
+                    state = get_state_from_checkpoint(checkpoint)
+                except HTTPException:
+                    state = None
+            
+            thread_ref = active_threads.get(thread_id)
+            thread_alive = bool(thread_ref and thread_ref.is_alive())
+            payload = _derive_status_view(thread_id, state or {}, thread_alive)
+
+            # Send update only if the payload content has changed
+            if payload != last_payload:
+                yield f"data: {json.dumps(payload)}\n\n"
+                last_payload = payload
+
+            # Exit condition: Status is terminal AND the background thread is confirmed dead
+            if payload["status"] in ("complete", "halted") and not thread_alive:
+                break
+
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
