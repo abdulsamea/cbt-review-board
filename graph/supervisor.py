@@ -63,7 +63,7 @@ def route_critic_check(state: ProjectState) -> str:
         return "HIL_Node"
         
     # 3. Halt Condition 2: Max Iteration Check (for subsequent revisions)
-    # If acceptable AND max iterations reached, FORCE HIL -> Finalize (or Review).
+    # If acceptable AND max iterations reached, FORCE Critic -> Finalize (this bypasses Human in Loop).
     # Max iterations is set to 20 (this includes all iterations for a thread, considering Human in loop reviews)
     if current_iteration >= 20:
         print("Router (Critic): Max iterations reached. Moving to Finalize.")
