@@ -31,7 +31,7 @@ thread_errors: Dict[str, str] = {}
 class StartSessionRequest(BaseModel):
     user_prompt: str
     thread_id: Optional[str] = None 
-    model_choice: str = "openai" 
+    model_choice: str = "openai"
 
 class ResumeSessionRequest(BaseModel):
     thread_id: str
