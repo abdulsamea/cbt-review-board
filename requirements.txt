@@ -17,3 +17,4 @@ python-dotenv
 nltk
 ipython
 fastmcp
+pypdf

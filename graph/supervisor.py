@@ -37,7 +37,7 @@ def route_initial_entry(state: ProjectState) -> str:
 
 # Conditional Edge Logic
 def route_safety_check(state: ProjectState) -> str:
-    SAFETY_THRESHOLD = 0.85
+    SAFETY_THRESHOLD = 0.70
     if state.get("safety_metric", 0.0) < SAFETY_THRESHOLD:
         print(
             f"Router (Safety): Below threshold ({state.get('safety_metric', 0.0):.2f}). Looping back to Drafting."
@@ -47,7 +47,7 @@ def route_safety_check(state: ProjectState) -> str:
 
 def route_critic_check(state: ProjectState) -> str:
     """Routes based on Empathy/Critic Metric and Iteration Count."""
-    EMPATHY_THRESHOLD = 0.70
+    EMPATHY_THRESHOLD = 0.60
     
     # 1. Empathy Check: If too low, always loop back.
     if state.get("empathy_metric", 0.0) < EMPATHY_THRESHOLD:
