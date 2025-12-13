@@ -1,5 +1,7 @@
 import asyncio
 import json
+from pathlib import Path
+import sqlite3
 import threading
 import uvicorn
 import uuid
@@ -10,9 +12,15 @@ from pydantic import BaseModel, Field
 from typing import Any, Dict, Literal, Optional, Union
 from graph.schemas import HumanDecision
 from graph.state import CriticNotes, SafetyReport
-from graph.supervisor import cbt_review_graph 
+from graph.supervisor import cbt_review_graph
+import msgpack
+
+from utils import make_json_safe
 
 app_api = FastAPI()
+
+_BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = _BASE_DIR / "cbt_review_board.sqlite"
 
 app_api.add_middleware(
     CORSMiddleware,
@@ -294,6 +302,40 @@ async def stream_session_info(thread_id: str, poll_interval: float = 0.75):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+
+@app_api.get("/checkpoints/{checkpoint_id}")
+def get_checkpoint(checkpoint_id: str):
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=500, detail="SQLite database not found")
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT checkpoint FROM checkpoints WHERE checkpoint_id = ?",
+            (checkpoint_id,),
+        )
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+        blob = row[0]
+
+        decoded = msgpack.unpackb(blob, raw=False)
+
+        safe_payload = make_json_safe(decoded)
+
+        return {
+            "checkpoint_id": checkpoint_id,
+            "checkpoint": safe_payload,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app_api, host="0.0.0.0", port=8000)

@@ -18,3 +18,4 @@ nltk
 ipython
 fastmcp
 pypdf
+msgpack
