@@ -1,9 +1,7 @@
-# graph/supervisor.py (Final fix for _GeneratorContextManager error)
-
 import os
 import sqlite3
 from pathlib import Path
-from langgraph.graph import StateGraph, END, START
+from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from graph.state import ProjectState
 from graph.agents import (
@@ -26,7 +24,7 @@ def route_initial_entry(state: ProjectState) -> str:
     """
     human_decision = state.get("human_decision")
     
-    # In a resume scenario, human_decision is set to 'Approve' or 'Reject' by the API server.
+    # In a resume scenario, human_decision is set to 'Approve' or 'Reject.
     # If the thread is new, human_decision is 'REVIEW_REQUIRED'.
     
     if human_decision == "Approve":
@@ -37,9 +35,8 @@ def route_initial_entry(state: ProjectState) -> str:
     print("Conditional Entry: Starting new or revised process. Routing to Drafting.")
     return "Drafting"
 
-# --- Conditional Edge Logic (Router Functions remain the same) ---
+# Conditional Edge Logic
 def route_safety_check(state: ProjectState) -> str:
-    # ... (content remains the same)
     SAFETY_THRESHOLD = 0.85
     if state.get("safety_metric", 0.0) < SAFETY_THRESHOLD:
         print(
@@ -67,13 +64,12 @@ def route_critic_check(state: ProjectState) -> str:
         
     # 3. Halt Condition 2: Max Iteration Check (for subsequent revisions)
     # If acceptable AND max iterations reached, FORCE HIL -> Finalize (or Review).
-    if current_iteration >= 10:
+    # Max iterations is set to 20 (this includes all iterations for a thread, considering Human in loop reviews)
+    if current_iteration >= 20:
         print("Router (Critic): Max iterations reached. Moving to Finalize.")
         return "Finalize" 
         
-    # 4. Default Path: If iteration count is 2 and metrics passed, send it to the Human for mandatory final approval (or one more loop if needed).
-    # Since the agent passed metrics, but is not at max iterations (i.e., count=2), send it to the human for the *final* pre-finalize review.
-    # Note: If the graph is resumed after a rejection, the iteration count will increase, routing it through the above checks.
+    # default to HIL node for review.
     print("Router (Critic): Metrics acceptable, but not yet finalized. Moving to HIL_Node for human review.")
     return "HIL_Node"
 
@@ -98,12 +94,11 @@ def route_human_decision(state: ProjectState) -> str:
         return "Drafting"
         
     else:
-        # This branch should ideally never be hit after the resume_session POST
+        # default to HIL node for review.
         print(f"Router (HIL): Unexpected decision or flag reset ({human_decision}). Halting.")
         return "HIL_Node"
 
-# --- Checkpointer Setup (Enforced SQLite Persistence) ---
-
+# Checkpointer Setup (Enforced SQLite Persistence)
 _BASE_DIR = Path(__file__).resolve().parent.parent
 SQLITE_DB_PATH = str(_BASE_DIR / "cbt_review_board.sqlite")
 
@@ -143,25 +138,22 @@ def _ensure_sqlite_file(path: str) -> None:
 def get_checkpointer() -> SqliteSaver:
     """
     Initializes and returns the SQLite Checkpointer by using a direct sqlite3 connection
-    (THE FIX). Throws a RuntimeError on failure.
+    Throws a RuntimeError on failure.
     """
     print(f"Attempting to initialize SQLite Checkpointer at: {SQLITE_DB_PATH}")
     try:
-        # 1. Ensure file existence and permissions are correct
         _ensure_sqlite_file(SQLITE_DB_PATH)
 
-        # 2. CREATE DIRECT CONNECTION OBJECT (THE FIX)
         # check_same_thread=False is essential for FastAPI/uvicorn (multithreading)
         conn = sqlite3.connect(SQLITE_DB_PATH, check_same_thread=False)
 
-        # 3. INSTANTIATE SQLITESAVER DIRECTLY WITH THE CONNECTION
-        checkpointer = SqliteSaver(conn) # <-- Fixed: No more .from_conn_string()
+        # INSTANTIATE SQLITESAVER DIRECTLY WITH THE CONNECTION
+        checkpointer = SqliteSaver(conn)
 
         print("SQLite Checkpointer initialized successfully. Persistence is ON.")
         return checkpointer
 
     except Exception as e:
-        # CRITICAL: Throw an error as requested.
         error_msg = (
             f"CRITICAL ERROR: Failed to initialize SQLite Checkpointer. Persistence is OFF. Details: {e}"
         )
@@ -169,7 +161,7 @@ def get_checkpointer() -> SqliteSaver:
         raise RuntimeError(error_msg) from e
 
 
-# --- Graph Compilation ---
+# Graph Compilation
 def compile_supervisor_graph():
     """Compiles the entire CBT Review Board LangGraph workflow."""
     
@@ -210,7 +202,7 @@ def compile_supervisor_graph():
 
     workflow.add_edge("Finalize", END)
 
-    # Compile with Persistence
+    # Compile with checkpointer based persistence
     app = workflow.compile(checkpointer=get_checkpointer())
     return app
 

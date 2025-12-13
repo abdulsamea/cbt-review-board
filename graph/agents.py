@@ -1,5 +1,3 @@
-# graph/agents.py (FIXED: Prompt Template Invocation)
-
 from typing import Dict, Any
 from graph.state import ProjectState, CriticNotes, SafetyReport
 from graph.llm_config import get_llm_chain
@@ -7,7 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
-# Initialize NLTK Sentiment Analyzer
+
 sid = SentimentIntensityAnalyzer()
 
 load_dotenv()
@@ -32,15 +30,14 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     current_draft = state.get("current_draft", "")
     critic_notes = state.get("critic_notes")
     safety_report = state.get("safety_report")
-    current_intent = state["user_intent"] # Grab the current user_intent
+    current_intent = state["user_intent"]
     
     critic_feedback = critic_notes.notes if critic_notes and hasattr(critic_notes, 'notes') else 'None'
     safety_feedback = safety_report.feedback if safety_report and hasattr(safety_report, 'feedback') else 'None'
 
-    # --- NEW LOGIC: Determine Revision Source ---
     is_human_revision = current_intent.startswith("REVISION INSTRUCTION:")
     
-    # 1. Prepare Base Context
+    # Prepare Base Context
     context = (
         f"You are a CBT exercise creator. Your task is to generate a comprehensive "
         f"Cognitive Behavioral Therapy (CBT) exercise based on the user's intent, "
@@ -51,7 +48,7 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     task_instruction: str
     
     if is_human_revision:
-        # --- PRIORITY 1: Human Rejection Feedback ---
+        # updated context if human feedback id provided to drafting node.
         revision_instruction = current_intent
         context += (
             f"\n\n--- CRITICAL REVISION TASK: HUMAN OVERRIDE ---"
@@ -64,7 +61,6 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         task_instruction = f"REVISE THE DRAFT using the instruction: {revision_instruction}"
         
     elif state.get("iteration_count", 0) > 0:
-        # --- PRIORITY 2: Internal LLM Feedback (Safety/Critic) ---
         context += (
             f"\n\n--- INTERNAL REVISION TASK ---"
             f"\nPrevious Draft Summary: {current_draft[:200]}..."
@@ -76,14 +72,11 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         task_instruction = f"REVISE THE DRAFT based on internal feedback for user intent: {state['user_intent']}"
         
     else:
-        # --- PRIORITY 3: Initial Draft ---
         task_instruction = f"GENERATE the initial draft for user intent: {state['user_intent']}"
 
 
-    # Use the structured intent for the prompt
     drafting_prompt = ChatPromptTemplate.from_messages([
         ("system", context),
-        # Pass the original user intent/the human revision instruction here
         ("human", "Core Task/Instruction: {task_instruction}"), 
     ])
     
@@ -109,9 +102,7 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         "active_node": "Drafting",
         # IMPORTANT: When a human rejected the draft, 'user_intent' was set to "REVISION INSTRUCTION:...",
         # We must reset 'human_decision' so the HIL router correctly pauses again for the next review.
-        "human_decision": "REVIEW_REQUIRED", 
-        # Optional: You might want to reset the user_intent to the ORIGINAL prompt after the revision is done, 
-        # but leaving it as the revision instruction ensures logging clarity.
+        "human_decision": "REVIEW_REQUIRED",
     }
 
 # Safety Team Agent Node
@@ -132,12 +123,10 @@ def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
         ("human", "Draft to review: {draft_content}"),
     ])
     
-    # --- FIX: Render the Prompt Template before invoking ---
     llm_chain = get_llm_chain(state["model_choice"], output_schema=SafetyReport)
     
     rendered_prompt = safety_check_prompt.invoke({"draft_content": draft})
     safety_output: SafetyReport = llm_chain.invoke(rendered_prompt)
-    # --- END FIX ---
     
     # NLTK Rule-Based Check (safety check)
     normalized_draft = draft.lower()
@@ -174,7 +163,7 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
     print("--- Running Clinical Critic Team ---")
     draft = state["current_draft"]
 
-    # LLM Check Prompt
+
     critic_check_prompt = ChatPromptTemplate.from_messages([
         ("system", 
          "Critique the tone, empathy, and CBT structure of this draft. "
@@ -183,12 +172,12 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
         ("human", "Draft to critique: {draft_content}"),
     ])
     
-    # --- FIX: Render the Prompt Template before invoking ---
+
     llm_chain = get_llm_chain(state["model_choice"], output_schema=CriticNotes)
     
     rendered_prompt = critic_check_prompt.invoke({"draft_content": draft})
     critic_output: CriticNotes = llm_chain.invoke(rendered_prompt)
-    # --- END FIX ---
+
     
     # NLTK Sentiment Check (Deterministic empathy/tone metric)
     sentiment_scores = sid.polarity_scores(draft)

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Any, Dict, Literal, Optional, Union
+from graph.schemas import HumanDecision
 from graph.state import CriticNotes, SafetyReport
 from graph.supervisor import cbt_review_graph 
 
@@ -35,7 +36,7 @@ class StartSessionRequest(BaseModel):
 class ResumeSessionRequest(BaseModel):
     thread_id: str
     suggested_content: str = Field(description="Specific feedback or new instructions for the drafting agent.")
-    human_decision: Literal['Approve', 'Reject']
+    human_decision: HumanDecision
 
 class SessionStatus(BaseModel):
     thread_id: str

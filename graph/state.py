@@ -1,33 +1,58 @@
-from typing import Literal, TypedDict, List
+from typing import TypedDict, List, Optional
 from pydantic import BaseModel, Field
+from graph.schemas import GraphNode, HumanDecision, ModelChoice
 
-# 1. Structured Feedback Models (Used by Critic and Safety Agents)
 class CriticNotes(BaseModel):
-    empathy_revision: str = Field(description="Specific feedback on tone/empathy, must be concise.")
-    structure_revision: str = Field(description="Specific feedback on CBT structure adherence.")
+    """Structured feedback provided by the Critic agent."""
+
+    empathy_revision: str = Field(
+        description="Specific feedback on tone and empathy. Must be concise."
+    )
+    structure_revision: str = Field(
+        description="Specific feedback on CBT structure adherence."
+    )
+
 
 class SafetyReport(BaseModel):
-    flagged_lines: List[int] = Field(description="List of line numbers flagged for potential harm or medical advice.")
-    safety_score: float = Field(description="Safety rating from 0.0 (unsafe) to 1.0 (safe).")
+    """Safety analysis output from the Safety agent."""
 
-# 2. The Core LangGraph State (The Blackboard)
+    flagged_lines: List[int] = Field(
+        description="Line numbers flagged for potential harm or medical advice."
+    )
+    safety_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Safety rating from 0.0 (unsafe) to 1.0 (safe).",
+    )
+
+# Core LangGraph State (Blackboard)
 class ProjectState(TypedDict):
+    """
+    Shared mutable state passed between LangGraph nodes.
+    Acts as the system blackboard.
+    """
+
+    # --- Identity / Session ---
     user_intent: str
-    thread_id: str # Crucial for checkpointing/HIL
+    thread_id: str  # Used for checkpointing and HIL persistence
+    model_choice: ModelChoice
+
+    # --- Draft Lifecycle ---
     current_draft: str
     draft_history: List[str]
     iteration_count: int
-    model_choice: str
-    active_node: Literal['Drafting', 'Safety', 'Critic', 'HIL_Node', 'Finalize']
-    
-    # Reducers / Metrics
-    safety_metric: float # Updated by Safety Team
-    empathy_metric: float # Updated by Critic Team
 
-    # Structured Feedback
-    critic_notes: CriticNotes
-    safety_report: SafetyReport
-    
-    # Control variables for routing/HIL
-    next_node:  Literal['openai', 'groq', 'ollama'] # Conditional edge result (used by Supervisor)
-    human_decision: str # Input from HIL ('Approve' or 'Reject')
+    # --- Execution Flow ---
+    active_node: GraphNode
+    next_node: GraphNode  # Set by supervisor routing logic
+
+    # --- Metrics / Reducers ---
+    safety_metric: float     # Updated by Safety agent
+    empathy_metric: float    # Updated by Critic agent
+
+    # --- Structured Agent Outputs ---
+    critic_notes: Optional[CriticNotes]
+    safety_report: Optional[SafetyReport]
+
+    # --- Human-in-the-Loop Control ---
+    human_decision: Optional[HumanDecision]
