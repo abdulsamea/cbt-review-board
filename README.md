@@ -134,11 +134,11 @@ Routing decisions are deterministic and based on:
 
 ## NHS Tool Integration
 
-The system integrates the **NHS Talking Therapies Manual**:
+The system integrates the **NHS Talking Therapies Manual** added at:
 
 ```
-data/nhs_talking_therapies_manual_v7.1.pdf
-graph/tools/nhs_cbt_manual_retriever.py
+data/nhs_talking_therapies_manual_v7.1.pdf (downloaded on first run)
+graph/tools/nhs_cbt_manual_retriever.py (retriever tool)
 ```
 
 * Used by Safety and Critic agents
@@ -159,10 +159,6 @@ A shared **blackboard** exists inside `ProjectState`:
 
 * `blackboard_notes`
 * `intent_signals`
-
-Example:
-
-> “Safety Agent flagged unsafe phrasing in line 3”
 
 Properties:
 
@@ -317,7 +313,7 @@ You can use the url `https://documenter.getpostman.com/view/1786186/2sB3dTs7qC` 
 
 ---
 
-## 🛠 Installation
+##  Installation
 
 ```bash
 python -m venv venv
@@ -332,9 +328,15 @@ python -c "import nltk; nltk.download('punkt')"
 python -c "import nltk; nltk.download('vader_lexicon')"
 ```
 
+### START SERVER
+
+```
+uvicorn api_server:app_api --reload
+```
+
 ---
 
-## 📁 Project Structure (Key Files)
+##  Project Structure (Key Files)
 
 ```
 graph/
