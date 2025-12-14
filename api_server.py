@@ -303,41 +303,6 @@ async def stream_session_info(thread_id: str, poll_interval: float = 0.75):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app_api.get("/checkpoints/{checkpoint_id}")
-def get_checkpoint(checkpoint_id: str):
-    if not DB_PATH.exists():
-        raise HTTPException(status_code=500, detail="SQLite database not found")
-
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT checkpoint FROM checkpoints WHERE checkpoint_id = ?",
-            (checkpoint_id,),
-        )
-
-        row = cursor.fetchone()
-        conn.close()
-
-        if row is None:
-            raise HTTPException(status_code=404, detail="Checkpoint not found")
-
-        blob = row[0]
-
-        decoded = msgpack.unpackb(blob, raw=False)
-
-        safe_payload = make_json_safe(decoded)
-
-        return {
-            "checkpoint_id": checkpoint_id,
-            "checkpoint": safe_payload,
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app_api.get("/threads/{thread_id}/checkpoints")
 def get_all_checkpoints_for_thread(thread_id: str):
     """
@@ -392,6 +357,40 @@ def get_all_checkpoints_for_thread(thread_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app_api.get("/checkpoints/{checkpoint_id}")
+def get_checkpoint(checkpoint_id: str):
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=500, detail="SQLite database not found")
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT checkpoint FROM checkpoints WHERE checkpoint_id = ?",
+            (checkpoint_id,),
+        )
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+        blob = row[0]
+
+        decoded = msgpack.unpackb(blob, raw=False)
+
+        safe_payload = make_json_safe(decoded)
+
+        return {
+            "checkpoint_id": checkpoint_id,
+            "checkpoint": safe_payload,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app_api, host="0.0.0.0", port=8000)
