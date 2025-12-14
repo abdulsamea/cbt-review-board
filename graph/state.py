@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Literal
 from pydantic import BaseModel, Field
 from graph.schemas import GraphNode, HumanDecision, ModelChoice
 
@@ -24,18 +24,6 @@ class SafetyReport(BaseModel):
         le=1.0,
         description="Safety rating from 0.0 (unsafe) to 1.0 (safe).",
     )
-from typing import TypedDict, List, Dict, Optional, Literal
-from graph.schemas import HumanDecision, ModelChoice
-from graph.state import CriticNotes, SafetyReport
-
-GraphNode = Literal[
-    "Drafting",
-    "Safety",
-    "Critic",
-    "HIL_Node",
-    "Finalize",
-    "END",
-]
 
 AgentName = Literal["Drafting", "Safety", "Critic", "Supervisor"]
 
