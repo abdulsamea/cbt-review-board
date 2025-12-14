@@ -6,7 +6,7 @@ A **stateful, multi-agent CBT exercise generation system** built with **LangGrap
 
 * explicit agent collaboration (blackboard)
 * persistent memory and crash recovery
-* human approval gates
+* human approval mechanism
 * Claude Desktop (MCP) integration
 
 Server runs locally at:
@@ -312,6 +312,8 @@ http://127.0.0.1:8000
 | GET    | `/stream_session_info`             | Real-time SSE updates   | `?thread_id=UUID`                                                                |
 | GET    | `/checkpoints/{checkpoint_id}`     | Fetch single checkpoint | URL param                                                                        |
 | GET    | `/threads/{thread_id}/checkpoints` | Fetch all checkpoints   | URL param                                                                        |
+
+You can use the url `https://documenter.getpostman.com/view/1786186/2sB3dTs7qC` to import the postman collection on your desktop and use the above APIs.
 
 ---
 
