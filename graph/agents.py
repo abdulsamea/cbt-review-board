@@ -1,10 +1,14 @@
-from typing import Dict, Any
-from graph.state import ProjectState, CriticNotes, SafetyReport
+from typing import Dict, Any, List
+from graph.state import (
+    ProjectState,
+    CriticNotes,
+    SafetyReport,
+    BlackboardNote,
+)
 from graph.llm_config import get_llm_chain
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 from graph.tools.nhs_cbt_manual_retriever import get_nhs_manual_retriever_tool
-
 
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -35,7 +39,6 @@ def get_llm_with_nhs_tool(model_choice, output_schema=None):
     )
 
 
-
 # Drafting Team Agent Node
 def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     print(f"--- Running Drafting Team (Iteration: {state.get('iteration_count', 0) + 1}) ---")
@@ -44,6 +47,17 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     critic_notes = state.get("critic_notes")
     safety_report = state.get("safety_report")
     current_intent = state["user_intent"]
+
+    # read blackboard
+    unresolved_notes = [
+        n for n in state.get("blackboard_notes", [])
+        if not n["resolved"]
+    ]
+
+    intent_signals = [
+        i for i in state.get("intent_signals", [])
+        if i["to_agent"] == "Drafting"
+    ]
 
     critic_feedback = critic_notes.notes if critic_notes and hasattr(critic_notes, 'notes') else 'None'
     safety_feedback = safety_report.feedback if safety_report and hasattr(safety_report, 'feedback') else 'None'
@@ -61,6 +75,13 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
         "- Do NOT quote the manual verbatim.\n"
         "- Do NOT provide diagnosis or treatment instructions."
     )
+
+    if unresolved_notes or intent_signals:
+        context += "\n\n--- INTERNAL BLACKBOARD DIRECTIVES ---"
+        for note in unresolved_notes:
+            context += f"\n- NOTE ({note['severity']}): {note['message']}"
+        for intent in intent_signals:
+            context += f"\n- INTENT: {intent['intent']} ({intent['reason']})"
 
     if is_human_revision:
         context += (
@@ -88,18 +109,20 @@ def drafting_agent_node(state: ProjectState) -> Dict[str, Any]:
     ])
 
     llm_chain = get_llm_chain(state["model_choice"])
-
     rendered_prompt = drafting_prompt.invoke({"task_instruction": task_instruction})
     new_draft = llm_chain.invoke(rendered_prompt).content
 
-    draft_history = state.get("draft_history", [])
-    if current_draft:
-        draft_history.append(current_draft)
+    # RESOLVE BLACKBOARD NOTES
+    resolved_notes: List[BlackboardNote] = []
+    for note in state.get("blackboard_notes", []):
+        resolved_notes.append({**note, "resolved": True})
 
     return {
         "current_draft": new_draft,
-        "draft_history": draft_history,
+        "draft_history": state.get("draft_history", []) + ([current_draft] if current_draft else []),
         "iteration_count": state.get("iteration_count", 0) + 1,
+        "blackboard_notes": resolved_notes,
+        "intent_signals": [],  # intents consumed, hence reset this
         "model_choice": state["model_choice"],
         "active_node": "Drafting",
         "human_decision": "REVIEW_REQUIRED",
@@ -135,13 +158,25 @@ def safety_agent_node(state: ProjectState) -> Dict[str, Any]:
         if term in normalized_draft:
             safety_violations.append(f"Contains prohibited phrase: '{term}'")
 
+    new_notes = state.get("blackboard_notes", [])
+
     if safety_violations:
         safety_output.safety_score = min(safety_output.safety_score, 0.2)
         safety_output.feedback = (safety_output.feedback or []) + safety_violations
 
+        for v in safety_violations:
+            new_notes.append({
+                "agent": "Safety",
+                "iteration": state.get("iteration_count", 0),
+                "severity": "blocker",
+                "message": v,
+                "resolved": False,
+            })
+
     return {
         "safety_report": safety_output,
         "safety_metric": safety_output.safety_score,
+        "blackboard_notes": new_notes,
         "model_choice": state["model_choice"],
         "active_node": "Safety",
     }
@@ -173,6 +208,17 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
     sentiment_scores = sid.polarity_scores(draft)
     empathy_metric = (sentiment_scores['compound'] + 1) / 2
 
+    new_notes = state.get("blackboard_notes", [])
+
+    if empathy_metric < 0.6:
+        new_notes.append({
+            "agent": "Critic",
+            "iteration": state.get("iteration_count", 0),
+            "severity": "warning",
+            "message": "Low empathy tone detected",
+            "resolved": False,
+        })
+
     print(
         f"NLTK Sentiment: {sentiment_scores['compound']:.2f} "
         f"-> Empathy Metric: {empathy_metric:.2f}"
@@ -181,6 +227,7 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
     return {
         "critic_notes": critic_output,
         "empathy_metric": empathy_metric,
+        "blackboard_notes": new_notes,
         "model_choice": state["model_choice"],
         "active_node": "Critic",
     }
@@ -190,7 +237,7 @@ def critic_agent_node(state: ProjectState) -> Dict[str, Any]:
 def finalize_node(state: ProjectState) -> Dict[str, Any]:
     """Finalizes the project and prepares the final approved output."""
     print("--- Running Finalize Node: Approval Granted ---")
-    
+
     final_output = {
         "final_status": "APPROVED",
         "final_draft": state["current_draft"],
@@ -199,15 +246,22 @@ def finalize_node(state: ProjectState) -> Dict[str, Any]:
         "empathy_score": state.get("empathy_metric"),
         "final_report": state.get("safety_report"),
     }
-    
+
     print("\n\n PROJECT FINALIZED AND APPROVED.")
-    
-    return {"current_draft": state["current_draft"], "final_output": final_output, "active_node": "Finalize"}
+
+    return {
+        "current_draft": state["current_draft"],
+        "final_output": final_output,
+        "active_node": "Finalize"
+    }
 
 
 # Human-in-the-Loop Node
 def hil_node(state: ProjectState) -> Dict[str, Any]:
     """Pauses the graph execution and waits for a human decision (Approve/Reject)."""
     print("--- Running HIL Node: Awaiting Human Review ---")
-    
-    return {"next_node": "HIL_Node", "active_node": "HIL_Node"}
+
+    return {
+        "next_node": "HIL_Node",
+        "active_node": "HIL_Node"
+    }
