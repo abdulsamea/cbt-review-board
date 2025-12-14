@@ -1,7 +1,5 @@
 # CBT Review Board
 
-**LangGraph · FastAPI · SQLite · NHS-Aligned · Human-in-the-Loop · Claude MCP**
-
 A **stateful, multi-agent CBT exercise generation system** built with **LangGraph**, **FastAPI**, and **SQLite**, designed to generate **safe, empathetic, NHS-aligned CBT exercises** with:
 
 * explicit agent collaboration (blackboard)
@@ -9,7 +7,30 @@ A **stateful, multi-agent CBT exercise generation system** built with **LangGrap
 * human approval mechanism
 * Claude Desktop (MCP) integration
 
-Server runs locally at:
+
+##  Installation (Run all commands step by step)
+
+```bash
+python -m venv venv    // create virtual env
+.\venv\Scripts\activate   // activate virtual env
+pip install -r requirements.txt   // install dependencies
+```
+
+### Install NLTK Dependencies (used for sentiment analysis)
+
+```bash
+python -c "import nltk; nltk.download('punkt')"
+python -c "import nltk; nltk.download('vader_lexicon')"
+```
+
+### START SERVER
+
+```
+uvicorn api_server:app_api --reload
+```
+
+
+### Server runs locally at:
 
 ```
 http://127.0.0.1:8000
@@ -234,7 +255,6 @@ This project exposes an **MCP server** so **Claude Desktop** can directly intera
 * Project runs without errors
 * Claude Desktop installed (latest version)
 
----
 
 ### Step 1: Locate Claude MCP Config File (Windows)
 
@@ -244,7 +264,6 @@ C:\Users\<YOUR_USERNAME>\.claude\config.json
 
 Create the file if it does not exist.
 
----
 
 ### Step 2: Add MCP Server Configuration
 
@@ -313,42 +332,19 @@ You can use the url `https://documenter.getpostman.com/view/1786186/2sB3dTs7qC` 
 
 ---
 
-##  Installation
-
-```bash
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### NLTK Dependencies
-
-```bash
-python -c "import nltk; nltk.download('punkt')"
-python -c "import nltk; nltk.download('vader_lexicon')"
-```
-
-### START SERVER
-
-```
-uvicorn api_server:app_api --reload
-```
-
----
-
 ##  Project Structure (Key Files)
 
 ```
 graph/
-  agents.py        # Agent logic
-  supervisor.py    # LangGraph routing & persistence
-  state.py         # ProjectState + blackboard
+  agents.py            # Agent logic
+  supervisor.py        # LangGraph routing & persistence
+  state.py             # ProjectState + blackboard
   tools/
     nhs_cbt_manual_retriever.py           # NHS retriever
-api_server.py      # FastAPI backend
-mcp_server.py      # Claude MCP server
-assets/images/     # Architecture diagrams
-cbt_review_board.sqlite # local db for Persistence & Memory
+api_server.py               # FastAPI backend
+mcp_server.py               # Claude MCP server
+assets/images/              # Architecture diagrams
+cbt_review_board.sqlite     # local db for Persistence & Memory
 ```
 
 ---
