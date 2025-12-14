@@ -337,5 +337,61 @@ def get_checkpoint(checkpoint_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app_api.get("/threads/{thread_id}/checkpoints")
+def get_all_checkpoints_for_thread(thread_id: str):
+    """
+    Returns all checkpoints for a given thread_id in chronological order.
+    """
+    if not DB_PATH.exists():
+        raise HTTPException(status_code=500, detail="SQLite database not found")
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT checkpoint_id, checkpoint
+            FROM checkpoints
+            WHERE thread_id = ?
+            ORDER BY checkpoint_id ASC
+            """,
+            (thread_id,),
+        )
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No checkpoints found for thread_id: {thread_id}",
+            )
+
+        checkpoints = []
+        for checkpoint_id, blob in rows:
+            decoded = msgpack.unpackb(blob, raw=False)
+            safe_payload = make_json_safe(decoded)
+
+            checkpoints.append(
+                {
+                    "checkpoint_id": checkpoint_id,
+                    "checkpoint": safe_payload,
+                }
+            )
+
+        return {
+            "thread_id": thread_id,
+            "total_checkpoints": len(checkpoints),
+            "checkpoints": checkpoints,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     uvicorn.run(app_api, host="0.0.0.0", port=8000)
