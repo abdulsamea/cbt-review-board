@@ -2,13 +2,12 @@
 
 A **stateful, multi-agent CBT exercise generation system** built with **LangGraph**, **FastAPI**, and **SQLite**, designed to generate **safe, empathetic, NHS-aligned CBT exercises** with:
 
-* explicit agent collaboration (blackboard)
-* persistent memory and crash recovery
-* human approval mechanism
-* Claude Desktop (MCP) integration
+- explicit agent collaboration (blackboard)
+- persistent memory and crash recovery
+- human approval mechanism
+- Claude Desktop (MCP) integration
 
-
-##  Installation (Run all commands step by step)
+## Installation (Run all commands step by step)
 
 ```bash
 python -m venv venv    // create virtual env
@@ -23,17 +22,28 @@ python -c "import nltk; nltk.download('punkt')"
 python -c "import nltk; nltk.download('vader_lexicon')"
 ```
 
+### Create a `.env` file in the project root folder and add these configuratons:
+
+```bash
+OPENAI_API_KEY="<YOUR-OPEAI-API-KEY>"
+GROQ_API_KEY="<YOUR-GROQ-API-KEY>"
+
+
 ### START SERVER
 
 ```
+
 uvicorn api_server:app_api --reload
+
 ```
 
 
 ### Server runs locally at:
 
 ```
+
 http://127.0.0.1:8000
+
 ```
 
 ---
@@ -47,19 +57,21 @@ http://127.0.0.1:8000
 ### High-Level Flow
 
 ```
+
 START
-  ↓
+↓
 Drafting Agent
-  ↓
+↓
 Safety Agent
-  ↓
+↓
 Clinical Critic Agent
-  ↓
+↓
 Human-in-the-Loop (HIL)
-  ↓
+↓
 Finalize
-  ↓
+↓
 END
+
 ```
 
 Routing decisions are deterministic and based on:
@@ -158,8 +170,10 @@ Routing decisions are deterministic and based on:
 The system integrates the **NHS Talking Therapies Manual** added at:
 
 ```
+
 data/nhs_talking_therapies_manual_v7.1.pdf (downloaded on first run)
 graph/tools/nhs_cbt_manual_retriever.py (retriever tool)
+
 ```
 
 * Used by Safety and Critic agents
@@ -259,8 +273,10 @@ This project exposes an **MCP server** so **Claude Desktop** can directly intera
 ### Step 1: Locate Claude MCP Config File (Windows)
 
 ```
+
 C:\Users\<YOUR_USERNAME>\.claude\config.json
-```
+
+````
 
 Create the file if it does not exist.
 
@@ -280,13 +296,13 @@ Use **absolute paths**:
     }
   }
 }
-```
+````
 
 **Important**
 
-* Paths must be absolute
-* Use double backslashes (`\\`)
-* Python must point to the project virtual environment
+- Paths must be absolute
+- Use double backslashes (`\\`)
+- Python must point to the project virtual environment
 
 ---
 
@@ -300,9 +316,9 @@ Use **absolute paths**:
 
 ### Step 4: Verify MCP Server
 
-* `mcp_server.py` loads LangGraph + SQLite
-* No errors should appear in Claude
-* Claude can now invoke CBT workflows
+- `mcp_server.py` loads LangGraph + SQLite
+- No errors should appear in Claude
+- Claude can now invoke CBT workflows
 
 Example prompt:
 
@@ -332,7 +348,7 @@ You can use the url `https://documenter.getpostman.com/view/1786186/2sB3dTs7qC` 
 
 ---
 
-##  Project Structure (Key Files)
+## Project Structure (Key Files)
 
 ```
 graph/
@@ -351,11 +367,11 @@ cbt_review_board.sqlite     # local db for Persistence & Memory
 
 ## Features of this graph
 
-* NHS-aligned by design
-* Deterministic and inspectable agent decisions
-* Human accountability built-in
-* Crash-safe persistence
-* Claude Desktop MCP compatible
-* Production-grade LangGraph usage
+- NHS-aligned by design
+- Deterministic and inspectable agent decisions
+- Human accountability built-in
+- Crash-safe persistence
+- Claude Desktop MCP compatible
+- Production-grade LangGraph usage
 
 ---
