@@ -28,11 +28,11 @@ python -c "import nltk; nltk.download('vader_lexicon')"
 OPENAI_API_KEY="<YOUR-OPEAI-API-KEY>"
 GROQ_API_KEY="<YOUR-GROQ-API-KEY>"
 
+```
 
 ### START SERVER
 
 ```
-
 uvicorn api_server:app_api --reload
 
 ```
