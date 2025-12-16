@@ -25,7 +25,7 @@ python -c "import nltk; nltk.download('vader_lexicon')"
 ### Create a `.env` file in the project root folder and add these configuratons:
 
 ```bash
-OPENAI_API_KEY="<YOUR-OPEAI-API-KEY>"
+OPENAI_API_KEY="<YOUR-OPENAI-API-KEY>"
 GROQ_API_KEY="<YOUR-GROQ-API-KEY>"
 
 ```
